@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/patch"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/patch"
 )
 
 // fileTools are Claude Code's own file tools, which Claude uses best. Each

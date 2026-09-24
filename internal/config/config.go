@@ -30,25 +30,25 @@ type Config struct {
 }
 
 // FromEnv returns the configuration, with overrides from
-// CODEX_CLAUDE_BRIDGE_{PORT,CLAUDE,CODEX,STATE,WATCHDOG}.
+// CHATGPT_CLAUDE_BRIDGE_{PORT,CLAUDE,CODEX,STATE,WATCHDOG}.
 func FromEnv() (Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Config{}, err
 	}
 	c := Config{
-		Addr:        "127.0.0.1:" + env("CODEX_CLAUDE_BRIDGE_PORT", "41420"),
+		Addr:        "127.0.0.1:" + env("CHATGPT_CLAUDE_BRIDGE_PORT", "41420"),
 		Model:       "claude-opus-5-5",
-		ClaudeBin:   env("CODEX_CLAUDE_BRIDGE_CLAUDE", filepath.Join(home, ".local/bin/claude")),
-		CodexBin:    env("CODEX_CLAUDE_BRIDGE_CODEX", "/Applications/ChatGPT.app/Contents/Resources/codex"),
-		StateDir:    env("CODEX_CLAUDE_BRIDGE_STATE", filepath.Join(home, ".codex/claude-bridge-state")),
+		ClaudeBin:   env("CHATGPT_CLAUDE_BRIDGE_CLAUDE", filepath.Join(home, ".local/bin/claude")),
+		CodexBin:    env("CHATGPT_CLAUDE_BRIDGE_CODEX", "/Applications/ChatGPT.app/Contents/Resources/codex"),
+		StateDir:    env("CHATGPT_CLAUDE_BRIDGE_STATE", filepath.Join(home, ".codex/claude-bridge-state")),
 		Watchdog:    5 * time.Minute,
 		IdleTimeout: 20 * time.Minute,
 		Autocompact: "800k",
 	}
-	if v := os.Getenv("CODEX_CLAUDE_BRIDGE_WATCHDOG"); v != "" {
+	if v := os.Getenv("CHATGPT_CLAUDE_BRIDGE_WATCHDOG"); v != "" {
 		if c.Watchdog, err = time.ParseDuration(v); err != nil {
-			return Config{}, fmt.Errorf("CODEX_CLAUDE_BRIDGE_WATCHDOG: %w", err)
+			return Config{}, fmt.Errorf("CHATGPT_CLAUDE_BRIDGE_WATCHDOG: %w", err)
 		}
 	}
 	return c, nil

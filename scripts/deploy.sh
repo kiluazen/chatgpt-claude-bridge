@@ -6,14 +6,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-label=com.kushalsm.codex-claude-bridge
-bin="$HOME/.local/bin/codex-claude-bridge"
+label=com.github.kiluazen.chatgpt-claude-bridge
+bin="$HOME/.local/bin/chatgpt-claude-bridge"
 plist="$HOME/Library/LaunchAgents/$label.plist"
 logs="$HOME/.codex/log"
 health=http://127.0.0.1:41420/health
 
 make check
-go build -o "$bin.new" ./cmd/codex-claude-bridge
+go build -o "$bin.new" ./cmd/chatgpt-claude-bridge
 
 for _ in $(seq 120); do
   busy=$(curl -fsS -m 2 "$health" 2>/dev/null | grep -o '"busy":[0-9]*' | cut -d: -f2 || true)

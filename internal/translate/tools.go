@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
 )
 
 // MCPPrefix is how Claude Code names the tools the bridge serves.

@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/claude"
-	"github.com/kiluazen/codex-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/claude"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
 )
 
 func items(t *testing.T, js string) []responses.InputItem {

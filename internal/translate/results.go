@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/claude"
-	"github.com/kiluazen/codex-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/claude"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
 )
 
 // MCPResult is a tools/call result sent back to Claude.

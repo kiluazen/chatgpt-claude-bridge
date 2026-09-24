@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/claude"
-	"github.com/kiluazen/codex-claude-bridge/internal/config"
-	"github.com/kiluazen/codex-claude-bridge/internal/patch"
-	"github.com/kiluazen/codex-claude-bridge/internal/responses"
-	"github.com/kiluazen/codex-claude-bridge/internal/translate"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/claude"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/config"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/patch"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/translate"
 )
 
 // maxSeen caps how many message ids and hashes a session keeps on disk.

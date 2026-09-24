@@ -36,12 +36,12 @@ var bridge struct {
 }
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "codex-claude-bridge-e2e-")
+	dir, err := os.MkdirTemp("", "chatgpt-claude-bridge-e2e-")
 	if err != nil {
 		panic(err)
 	}
 	bridge.bin, bridge.state = filepath.Join(dir, "bridge"), filepath.Join(dir, "state")
-	if out, err := exec.Command("go", "build", "-o", bridge.bin, "../cmd/codex-claude-bridge").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", bridge.bin, "../cmd/chatgpt-claude-bridge").CombinedOutput(); err != nil {
 		panic(fmt.Sprintf("build: %v\n%s", err, out))
 	}
 	if err := startBridge(); err != nil {
@@ -55,7 +55,7 @@ func TestMain(m *testing.M) {
 
 func startBridge() error {
 	cmd := exec.Command(bridge.bin)
-	cmd.Env = append(os.Environ(), "CODEX_CLAUDE_BRIDGE_PORT=41421", "CODEX_CLAUDE_BRIDGE_STATE="+bridge.state)
+	cmd.Env = append(os.Environ(), "CHATGPT_CLAUDE_BRIDGE_PORT=41421", "CHATGPT_CLAUDE_BRIDGE_STATE="+bridge.state)
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err

@@ -15,8 +15,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/config"
-	"github.com/kiluazen/codex-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/config"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
 )
 
 const maxBodyBytes = 32 << 20
@@ -175,7 +175,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeRPC(w http.ResponseWriter, id json.RawMessage, result any) {
-	w.Header().Set("Mcp-Session-Id", "codex-claude-bridge")
+	w.Header().Set("Mcp-Session-Id", "chatgpt-claude-bridge")
 	writeJSON(w, http.StatusOK, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 

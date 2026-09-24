@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
 )
 
 func TestToolResult(t *testing.T) {

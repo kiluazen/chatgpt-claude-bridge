@@ -1,4 +1,4 @@
-// Command codex-claude-bridge serves Claude Opus to the Codex desktop app as a
+// Command chatgpt-claude-bridge serves Claude Opus to the Codex desktop app as a
 // Responses API model, backed by the local, authenticated Claude Code CLI.
 package main
 
@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kiluazen/codex-claude-bridge/internal/bridge"
-	"github.com/kiluazen/codex-claude-bridge/internal/config"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/bridge"
+	"github.com/kiluazen/chatgpt-claude-bridge/internal/config"
 )
 
 func main() {
@@ -40,7 +40,7 @@ func run() error {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
 	go b.Run(ctx)
-	slog.Info("codex claude bridge listening", "addr", cfg.Addr, "model", cfg.Model)
+	slog.Info("bridge listening", "addr", cfg.Addr, "model", cfg.Model)
 
 	select {
 	case err := <-serveErr:
