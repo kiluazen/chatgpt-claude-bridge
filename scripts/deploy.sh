@@ -39,10 +39,15 @@ cat > "$plist" <<EOF
 </plist>
 EOF
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+# bootout returns before launchd drops the job, and bootstrap fails until it has.
+for _ in $(seq 50); do
+  launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break
+  sleep 0.2
+done
 launchctl bootstrap "gui/$(id -u)" "$plist"
 
 for _ in $(seq 50); do
-  if curl -fsS -m 1 "$health"; then echo; exit 0; fi
+  if curl -fs -m 1 "$health"; then echo; exit 0; fi
   sleep 0.2
 done
 echo "the bridge did not come up; see $logs/claude-bridge.log" >&2
