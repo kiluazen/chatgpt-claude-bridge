@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -14,13 +15,17 @@ import (
 // MCPPrefix is how Claude Code names the tools the bridge serves.
 const MCPPrefix = "mcp__codex__"
 
-// directTools are the Codex tools Claude sees as its own. The rest are reached
-// through search_codex_tools and call_codex_tool, which keeps Claude's tool
-// list small.
-var directTools = map[string]bool{
-	"exec_command": true, "write_stdin": true, "apply_patch": true,
-	"view_image": true, "update_plan": true, "request_user_input": true,
-}
+// directTools are the Codex tools Claude sees as its own, with every tool of
+// the directNamespaces: collaboration holds Codex's multi-agent tools, which
+// Codex's instructions name. The rest are reached through search_codex_tools
+// and call_codex_tool, which keeps Claude's tool list small.
+var (
+	directTools = map[string]bool{
+		"exec_command": true, "write_stdin": true, "apply_patch": true,
+		"view_image": true, "update_plan": true, "request_user_input": true,
+	}
+	directNamespaces = map[string]bool{"collaboration": true}
+)
 
 var (
 	searchTool = MCPTool{
@@ -63,16 +68,9 @@ type Registry struct {
 func NewRegistry(specs []responses.Tool) *Registry {
 	r := &Registry{byKey: map[string]*Tool{}}
 	add := func(spec responses.Tool, namespace string) {
-		key := spec.Name
-		if namespace != "" {
-			sep := "__"
-			if strings.HasPrefix(spec.Name, "_") {
-				sep = ""
-			}
-			key = namespace + sep + spec.Name
-		}
+		key := toolKey(namespace, spec.Name)
 		t := &Tool{Key: key, CodexName: spec.Name, Namespace: namespace, Custom: spec.Type == "custom",
-			Description: cmp.Or(spec.Description, key), InputSchema: spec.Parameters}
+			Description: cmp.Or(spec.Description, key), InputSchema: withoutEncryption(spec.Parameters)}
 		switch {
 		case t.Custom:
 			t.InputSchema = mustJSON(map[string]any{"type": "object", "required": []string{"input"},
@@ -81,7 +79,7 @@ func NewRegistry(specs []responses.Tool) *Registry {
 			t.InputSchema = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
 		r.byKey[key] = t
-		if namespace == "" && directTools[spec.Name] {
+		if (namespace == "" && directTools[spec.Name]) || directNamespaces[namespace] {
 			r.Listed = append(r.Listed, MCPTool{Name: key, Description: t.Description, InputSchema: t.InputSchema})
 		}
 	}
@@ -101,6 +99,35 @@ func NewRegistry(specs []responses.Tool) *Registry {
 	}
 	r.Listed = append(r.Listed, searchTool, callTool)
 	return r
+}
+
+// toolKey is the name Claude uses for a Codex tool: namespaced tools join
+// their namespace, as Codex's own MCP tool names do.
+func toolKey(namespace, name string) string {
+	switch {
+	case namespace == "":
+		return name
+	case strings.HasPrefix(name, "_"):
+		return namespace + name
+	}
+	return namespace + "__" + name
+}
+
+// withoutEncryption drops the "encrypted" marks Codex puts on some
+// parameters, such as an agent message's text. They ask OpenAI's servers to
+// encrypt what an OpenAI model writes there; Claude writes plain text.
+func withoutEncryption(schema json.RawMessage) json.RawMessage {
+	var whole map[string]json.RawMessage
+	var props map[string]map[string]json.RawMessage
+	if !bytes.Contains(schema, []byte(`"encrypted"`)) ||
+		json.Unmarshal(schema, &whole) != nil || json.Unmarshal(whole["properties"], &props) != nil {
+		return schema
+	}
+	for _, p := range props {
+		delete(p, "encrypted")
+	}
+	whole["properties"] = mustJSON(props)
+	return mustJSON(whole)
 }
 
 // SearchHit is one search_codex_tools result.

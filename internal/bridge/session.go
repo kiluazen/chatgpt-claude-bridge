@@ -76,7 +76,7 @@ type Session struct {
 	decisions  map[string]translate.Decision
 	virtual    map[string]string // files as edits earlier in the same reply leave them
 	pending    map[string]*pendingCall
-	queued     map[string]json.RawMessage
+	queued     map[string]callResult
 	held       []claude.Block // Codex context held back while a slash command runs
 	notes      []string       // compaction notes for the next Codex request
 
@@ -111,6 +111,7 @@ type pendingCall struct {
 
 type callResult struct {
 	output json.RawMessage
+	mail   []string // agent messages that arrived with the result
 	err    string
 }
 
@@ -125,7 +126,7 @@ func newSession(cfg config.Config, cmds *commands, req *responses.Request, onExi
 		decisions:  map[string]translate.Decision{},
 		virtual:    map[string]string{},
 		pending:    map[string]*pendingCall{},
-		queued:     map[string]json.RawMessage{},
+		queued:     map[string]callResult{},
 		lastUsed:   time.Now(),
 		lastEvent:  time.Now(),
 	}
@@ -258,13 +259,27 @@ func (s *Session) serve(st *responses.Stream, req *responses.Request) {
 
 	messages, outputs := translate.NewInput(req.Input, s.seen, s.strict)
 	s.strict = false
+	// Agent messages that arrive with tool results go to Claude inside the
+	// last result it is waiting on, where Codex places them for native
+	// models: a wait_agent result arrives with the answers it waited for.
+	carrier := -1
+	for i, out := range outputs {
+		if s.resumes(out.CallID) {
+			carrier = i
+		}
+	}
+	resumed := carrier >= 0 // a tool result reaches Claude
+	var mail []string
+	if resumed {
+		mail, messages = translate.SplitAgentMessages(messages)
+	}
 	var orphans []responses.InputItem
-	resumed := false // a tool result reached Claude
-	for _, out := range outputs {
-		switch s.deliver(out) {
-		case delivered, queued:
-			resumed = true
-		case orphaned:
+	for i, out := range outputs {
+		r := callResult{output: out.Output}
+		if i == carrier {
+			r.mail = mail
+		}
+		if s.deliver(out.CallID, r) == orphaned {
 			orphans = append(orphans, out)
 		}
 	}
@@ -628,20 +643,26 @@ const (
 	orphaned                  // Claude stopped waiting: the bridge restarted mid-call
 )
 
+// resumes reports whether a result for callID reaches the Claude turn that
+// asked for it, rather than a turn lost in a restart.
+func (s *Session) resumes(callID string) bool {
+	return s.awaiting[callID] && (s.pending[callID] != nil || s.running)
+}
+
 // deliver routes one tool result. Codex resends every earlier result on each
 // request; only results for calls Claude is still awaiting count.
-func (s *Session) deliver(out responses.InputItem) delivery {
-	if !s.awaiting[out.CallID] {
+func (s *Session) deliver(callID string, r callResult) delivery {
+	if !s.awaiting[callID] {
 		return history
 	}
-	delete(s.awaiting, out.CallID)
-	if c, ok := s.pending[out.CallID]; ok {
-		delete(s.pending, out.CallID)
-		c.result <- callResult{output: out.Output}
+	delete(s.awaiting, callID)
+	if c, ok := s.pending[callID]; ok {
+		delete(s.pending, callID)
+		c.result <- r
 		return delivered
 	}
 	if s.running {
-		s.queued[out.CallID] = out.Output
+		s.queued[callID] = r
 		return queued
 	}
 	return orphaned
@@ -673,11 +694,11 @@ func (s *Session) callTool(ctx context.Context, name string, args json.RawMessag
 		s.mu.Unlock()
 		return translate.MCPResult{}, errors.New("tools/call without claudecode/toolUseId")
 	}
-	if out, ok := s.queued[id]; ok {
+	if r, ok := s.queued[id]; ok {
 		delete(s.queued, id)
 		delete(s.decisions, id)
 		s.mu.Unlock()
-		return toolResult(d, out), nil
+		return toolResult(d, r), nil
 	}
 	c := &pendingCall{result: make(chan callResult, 1)}
 	s.pending[id] = c
@@ -688,10 +709,7 @@ func (s *Session) callTool(ctx context.Context, name string, args json.RawMessag
 		s.mu.Lock()
 		delete(s.decisions, id)
 		s.mu.Unlock()
-		if r.err != "" {
-			return translate.ErrorResult(r.err), nil
-		}
-		return toolResult(d, r.output), nil
+		return toolResult(d, r), nil
 	case <-ctx.Done():
 		s.mu.Lock()
 		if s.pending[id] == c {
@@ -702,12 +720,15 @@ func (s *Session) callTool(ctx context.Context, name string, args json.RawMessag
 	}
 }
 
-func toolResult(d translate.Decision, output json.RawMessage) translate.MCPResult {
-	var text string
-	if d.ReadFrom > 0 && json.Unmarshal(output, &text) == nil {
-		return translate.TextResult(translate.NumberRead(text, d.ReadFrom))
+func toolResult(d translate.Decision, r callResult) translate.MCPResult {
+	if r.err != "" {
+		return translate.ErrorResult(r.err)
 	}
-	return translate.ToolResult(output)
+	var text string
+	if d.ReadFrom > 0 && json.Unmarshal(r.output, &text) == nil {
+		return translate.TextResult(translate.NumberRead(text, d.ReadFrom)).WithText(r.mail...)
+	}
+	return translate.ToolResult(r.output).WithText(r.mail...)
 }
 
 // tools is what Claude sees in tools/list.

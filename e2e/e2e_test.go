@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -184,6 +185,22 @@ func TestReadAndEdit(t *testing.T) {
 	got, _ := os.ReadFile(file)
 	if !strings.Contains(string(got), `"hi there"`) || !strings.Contains(string(got), "return b - a") || len(tr.of("file_change")) < 2 {
 		t.Fatalf("file %q, changes %v", got, tr.of("file_change"))
+	}
+}
+
+// An Opus parent gives an Opus sub-agent a task and then a follow-up task,
+// and gets each answer back from wait_agent. The sub-agent's shell output
+// is random, so only a child that got its task can produce it.
+func TestSubagentTasks(t *testing.T) {
+	tr := codexTurn(t, t.TempDir(), "Use Codex's collaboration tools; do not run shell commands yourself. "+
+		"1) collaboration__spawn_agent with task_name \"child\", fork_turns \"none\" and message: "+
+		"\"Run `echo FIRST-$RANDOM$RANDOM` with exec_command and reply with only its output.\" "+
+		"2) collaboration__wait_agent. 3) collaboration__followup_task to \"child\" with message: "+
+		"\"Run `echo SECOND-$RANDOM$RANDOM` with exec_command and reply with only its output.\" "+
+		"4) collaboration__wait_agent. Then reply with the child's two answers, one per line, nothing else.")
+	answers := regexp.MustCompile(`(FIRST|SECOND)-\d{2,}`).FindAllString(tr.message(), -1)
+	if len(answers) != 2 || len(tr.of("command_execution")) > 0 {
+		t.Fatalf("answers %q, parent commands %v, message %q", answers, tr.of("command_execution"), tr.message())
 	}
 }
 

@@ -5,6 +5,7 @@ package translate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -45,6 +46,15 @@ func NewSeen(ids, hashes []string) *Seen {
 	return s
 }
 
+func (s *Seen) add(id, hash string) {
+	if id != "" {
+		s.ids.add(id)
+	}
+	s.hashes.add(hash)
+}
+
+func (s *Seen) empty() bool { return len(s.ids.order) == 0 && len(s.hashes.order) == 0 }
+
 // IDs returns up to limit of the newest message ids.
 func (s *Seen) IDs(limit int) []string { return s.ids.newest(limit) }
 
@@ -72,13 +82,21 @@ func (o *orderedSet) newest(n int) []string { return slices.Clone(o.order[max(0,
 
 // NewInput splits one Codex request into what is new for Claude. Codex
 // resends the whole thread on every request, and Claude Code already holds
-// it, so only unseen user and developer messages pass. Every tool result is
-// returned; the session knows which ones Claude is waiting for.
+// it, so only unseen user, developer and agent messages pass. Every tool
+// result is returned; the session knows which ones Claude is waiting for.
 //
 // After a compaction Codex replays old messages under new ids, which content
 // hashes catch. The newest user message still passes when it repeats an
 // earlier text ("yes" twice), unless strict is set right after a compaction.
+// Agent messages carry ids of their own, so a repeated task still passes.
+//
+// A thread Claude has seen nothing of passes whole, with its replies, tool
+// calls and results: a sub-agent forked from its parent starts with the
+// parent's turns, which Claude never saw.
 func NewInput(items []responses.InputItem, seen *Seen, strict bool) (messages, outputs []responses.InputItem) {
+	if seen.empty() {
+		return history(items, seen)
+	}
 	lastUser := -1
 	for i, it := range items {
 		if it.Type == responses.TypeMessage && it.Author() == "user" {
@@ -90,23 +108,38 @@ func NewInput(items []responses.InputItem, seen *Seen, strict bool) (messages, o
 			outputs = append(outputs, it)
 			continue
 		}
-		if it.Type != responses.TypeMessage {
+		if it.Type != responses.TypeMessage && it.Type != responses.TypeAgentMessage {
 			continue
 		}
 		hash := contentHash(it)
 		idSeen := it.ID != "" && seen.ids.contains(it.ID)
 		hashSeen := seen.hashes.contains(hash)
-		if it.ID != "" {
-			seen.ids.add(it.ID)
-		}
-		seen.hashes.add(hash)
+		seen.add(it.ID, hash)
 		if idSeen || it.Author() == "assistant" {
 			continue
 		}
-		if hashSeen && (strict || i != lastUser || it.ID == "") {
+		repeatable := it.ID != "" && (i == lastUser || it.Type == responses.TypeAgentMessage)
+		if hashSeen && (strict || !repeatable) {
 			continue
 		}
 		if text := ItemText(it); strings.HasPrefix(text, compactionSummary) || strings.HasPrefix(text, CompactionPrompt) {
+			continue
+		}
+		messages = append(messages, it)
+	}
+	return messages, outputs
+}
+
+// history is the whole thread for a Claude session that has seen none of it.
+func history(items []responses.InputItem, seen *Seen) (messages, outputs []responses.InputItem) {
+	for _, it := range items {
+		switch it.Type {
+		case responses.TypeMessage, responses.TypeAgentMessage:
+			seen.add(it.ID, contentHash(it))
+		case responses.TypeFunctionOutput, responses.TypeCustomOutput:
+			outputs = append(outputs, it)
+		case responses.TypeFunctionCall, responses.TypeCustomCall:
+		default:
 			continue
 		}
 		messages = append(messages, it)
@@ -130,10 +163,21 @@ func ItemText(it responses.InputItem) string {
 	return b.String()
 }
 
-// MessageBlocks turns one Codex message into Claude content blocks. The role
-// tag sits inside the first text block, so text that starts with "/" never
-// reads as a Claude Code command.
-func MessageBlocks(it responses.InputItem) []claude.Block {
+// ItemBlocks turns one Codex item into Claude content blocks. A message's
+// role tag sits inside its first text block, so text that starts with "/"
+// never reads as a Claude Code command. Tool calls and results, which reach
+// Claude as items only in history it has not seen, become text.
+func ItemBlocks(it responses.InputItem) []claude.Block {
+	switch it.Type {
+	case responses.TypeAgentMessage:
+		return []claude.Block{claude.Text(agentMessageTag + AgentMessageText(it))}
+	case responses.TypeFunctionCall:
+		return []claude.Block{claude.Text(fmt.Sprintf("[tool call %s] %s %s", it.CallID, toolKey(it.Namespace, it.Name), clip(it.Arguments)))}
+	case responses.TypeCustomCall:
+		return []claude.Block{claude.Text(fmt.Sprintf("[tool call %s] %s\n%s", it.CallID, it.Name, clip(it.Input)))}
+	case responses.TypeFunctionOutput, responses.TypeCustomOutput:
+		return []claude.Block{claude.Text(fmt.Sprintf("[tool result %s] %s", it.CallID, clip(outputText(it.Output))))}
+	}
 	var blocks []claude.Block
 	text := func(s string) {
 		if len(blocks) == 0 {
@@ -192,7 +236,7 @@ func textOnly(it responses.InputItem) bool {
 func blocksOf(messages []responses.InputItem) []claude.Block {
 	var blocks []claude.Block
 	for _, it := range messages {
-		blocks = append(blocks, MessageBlocks(it)...)
+		blocks = append(blocks, ItemBlocks(it)...)
 	}
 	return blocks
 }

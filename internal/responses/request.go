@@ -37,22 +37,30 @@ func (r *Request) Kind() string {
 	return meta.RequestKind
 }
 
-// Input item types the bridge acts on. Other types in the thread (reasoning,
-// tool calls, web searches) are Codex's copies of what Claude produced.
+// Input item types the bridge reads. Reasoning and web searches in the
+// thread are Codex's copies of what a model produced; tool calls matter only
+// in history Claude has not seen, such as a forked parent's turns.
 const (
 	TypeMessage        = "message"
+	TypeAgentMessage   = "agent_message" // a message from another agent in the thread tree
+	TypeFunctionCall   = "function_call"
+	TypeCustomCall     = "custom_tool_call"
 	TypeFunctionOutput = "function_call_output"
 	TypeCustomOutput   = "custom_tool_call_output"
 )
 
 // InputItem is one entry of the thread Codex sends.
 type InputItem struct {
-	Type    string          `json:"type"`
-	ID      string          `json:"id"`
-	Role    string          `json:"role"`
-	Content Content         `json:"content"`
-	CallID  string          `json:"call_id"`
-	Output  json.RawMessage `json:"output"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	Role      string          `json:"role"`
+	Content   Content         `json:"content"`
+	CallID    string          `json:"call_id"`
+	Output    json.RawMessage `json:"output"`
+	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
+	Arguments string          `json:"arguments"` // function calls
+	Input     string          `json:"input"`     // custom tool calls
 }
 
 // Author is the message role, "user" when unset.
@@ -94,15 +102,20 @@ const (
 	PartOutputText = "output_text"
 	PartInputImage = "input_image"
 	PartInputFile  = "input_file"
+	// PartEncrypted carries an agent message's payload. OpenAI models write
+	// it encrypted; other models' payloads arrive in it as plain text.
+	PartEncrypted = "encrypted_content"
 )
 
-// Part is one piece of a message: text, an image or a file.
+// Part is one piece of a message: text, an image, a file or an agent
+// message's payload.
 type Part struct {
-	Type     string `json:"type"`
-	Text     string `json:"text"`
-	ImageURL string `json:"image_url"`
-	Filename string `json:"filename"`
-	FileURL  string `json:"file_url"`
+	Type             string `json:"type"`
+	Text             string `json:"text"`
+	ImageURL         string `json:"image_url"`
+	Filename         string `json:"filename"`
+	FileURL          string `json:"file_url"`
+	EncryptedContent string `json:"encrypted_content"`
 }
 
 // IsText reports whether the part carries text.

@@ -46,6 +46,14 @@ func ErrorResult(s string) MCPResult {
 	return r
 }
 
+// WithText adds text items to a result.
+func (r MCPResult) WithText(texts ...string) MCPResult {
+	for _, t := range texts {
+		r.Content = append(r.Content, mcpText(t))
+	}
+	return r
+}
+
 // JSONResult is a text result holding v as JSON.
 func JSONResult(v any) MCPResult { return TextResult(string(mustJSON(v))) }
 
@@ -170,32 +178,42 @@ func imageMime(declared, data string) string {
 	return ""
 }
 
-const orphanChars = 20000
+const clipChars = 20000
 
 var inlineData = regexp.MustCompile(`data:[\w/+.-]+;base64,[A-Za-z0-9+/=]+`)
 
 // OrphanText presents tool results that Claude asked for but stopped waiting
 // on, because the bridge restarted mid-call, as text so the turn can carry
-// on. Image data is dropped and long outputs are cut: base64 costs about one
-// token per character.
+// on.
 func OrphanText(outputs []responses.InputItem) string {
 	parts := make([]string, 0, len(outputs))
 	for _, it := range outputs {
-		var text string
-		if json.Unmarshal(it.Output, &text) != nil {
-			text = string(it.Output)
-		}
-		text = dropBase64Runs(inlineData.ReplaceAllString(text, "[binary data omitted]"))
-		if len(text) > orphanChars {
-			cut := orphanChars
-			for cut > 0 && !utf8.RuneStart(text[cut]) {
-				cut--
-			}
-			text = fmt.Sprintf("%s\n[truncated %d characters]", text[:cut], len(text)-cut)
-		}
-		parts = append(parts, fmt.Sprintf("[bridge] Result of your earlier tool call %s:\n%s", it.CallID, text))
+		parts = append(parts, fmt.Sprintf("[bridge] Result of your earlier tool call %s:\n%s", it.CallID, clip(outputText(it.Output))))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// outputText is a tool output as text: the string Codex sent, or its JSON.
+func outputText(output json.RawMessage) string {
+	var text string
+	if json.Unmarshal(output, &text) != nil {
+		return string(output)
+	}
+	return text
+}
+
+// clip readies tool text for Claude's context: image data is dropped and
+// long text is cut, since base64 costs about one token per character.
+func clip(text string) string {
+	text = dropBase64Runs(inlineData.ReplaceAllString(text, "[binary data omitted]"))
+	if len(text) <= clipChars {
+		return text
+	}
+	cut := clipChars
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\n[truncated %d characters]", text[:cut], len(text)-cut)
 }
 
 // dropBase64Runs replaces runs of 2000 or more base64 characters.

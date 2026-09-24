@@ -16,7 +16,10 @@ func registry(t *testing.T) *Registry {
 		{"type":"custom","name":"apply_patch","description":"Patch files","format":{"type":"grammar"}},
 		{"type":"function","name":"view_image","parameters":{"type":"object"}},
 		{"type":"namespace","name":"mcp__codex_app","tools":[{"type":"function","name":"open_in_codex","description":"Open a file in a Codex panel","parameters":{"type":"object"}}]},
-		{"type":"namespace","name":"mcp__codex_apps__gmail","tools":[{"type":"function","name":"_read_email","description":"Read an email","parameters":{"type":"object"}}]}
+		{"type":"namespace","name":"mcp__codex_apps__gmail","tools":[{"type":"function","name":"_read_email","description":"Read an email","parameters":{"type":"object"}}]},
+		{"type":"namespace","name":"collaboration","tools":[
+			{"type":"function","name":"spawn_agent","description":"Spawn an agent","parameters":{"type":"object","properties":{"message":{"type":"string","encrypted":true},"task_name":{"type":"string"}},"required":["task_name","message"]}},
+			{"type":"function","name":"wait_agent","description":"Wait for agents","parameters":{"type":"object","properties":{}}}]}
 	]`), &specs); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +32,7 @@ func TestRegistryListing(t *testing.T) {
 	for _, tool := range r.Listed {
 		names = append(names, tool.Name)
 	}
-	want := "Read Edit Write exec_command apply_patch view_image search_codex_tools call_codex_tool"
+	want := "Read Edit Write exec_command apply_patch view_image collaboration__spawn_agent collaboration__wait_agent search_codex_tools call_codex_tool"
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("listed %q", got)
 	}
@@ -39,6 +42,26 @@ func TestRegistryListing(t *testing.T) {
 	if got := r.Search("gmail")[0].Name; got != "mcp__codex_apps__gmail_read_email" {
 		t.Errorf("search gmail: %s", got)
 	}
+}
+
+func TestAgentToolsDropEncryptionMarks(t *testing.T) {
+	for _, tool := range registry(t).Listed {
+		if tool.Name != "collaboration__spawn_agent" {
+			continue
+		}
+		var schema struct {
+			Properties map[string]map[string]any `json:"properties"`
+			Required   []string                  `json:"required"`
+		}
+		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := schema.Properties["message"]["encrypted"]; ok || schema.Properties["message"]["type"] != "string" || len(schema.Required) != 2 {
+			t.Fatalf("schema %s", tool.InputSchema)
+		}
+		return
+	}
+	t.Fatal("spawn_agent not listed")
 }
 
 func TestNamespacedToolGoesBackWithNamespace(t *testing.T) {
