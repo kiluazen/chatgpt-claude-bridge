@@ -171,9 +171,10 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, f forwarding) {
 		Transport:     s.transport,
 		FlushInterval: -1, // Responses stream as server-sent events
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			if r.Context().Err() == nil {
-				slog.Error("upstream", "route", f.route, "model", f.model, "err", err)
+			if r.Context().Err() != nil {
+				return // Codex hung up first; there is no one to answer
 			}
+			slog.Error("upstream", "route", f.route, "model", f.model, "err", err)
 			writeError(w, http.StatusBadGateway, err.Error())
 		},
 	}
