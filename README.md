@@ -80,14 +80,13 @@ The router reads the file on every request, so a new key takes effect without a 
 ```toml
 openai_base_url = "http://127.0.0.1:41419/backend-api/codex"
 experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"
-experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"
 ```
 
 - There must be no top-level `model_provider` line, so Codex uses its built-in OpenAI provider. Remove any `model_catalog_json` line too, because the router serves the model list itself.
 - `openai_base_url` moves only the address of that built-in provider. Codex still treats it as OpenAI: it sends your ChatGPT sign-in, which the router forwards only to chatgpt.com, and keeps every GPT feature on.
-- The two `experimental_realtime_*` lines send the Voice button straight to OpenAI, so voice never passes through the router.
+- `experimental_realtime_webrtc_call_base_url` starts Voice calls straight at OpenAI, so voice never passes through the router. Don't set `experimental_realtime_ws_base_url`: a voice call's own websocket goes to api.openai.com, and that setting moves it to an address that answers 403.
 
-**Upgrading from the earlier setup**, which used a `[model_providers.router]` table: delete the top-level `model_provider = "router"` line, add the lines above, and keep the table. Codex resumes each thread with the provider it started with, so threads you started before still need it. New threads use the built-in provider.
+**Upgrading from the earlier setup**, which used a `[model_providers.router]` table: delete the top-level `model_provider = "router"` line and any `experimental_realtime_ws_base_url` line, add the lines above, and keep the table. Codex resumes each thread with the provider it started with, so threads you started before still need it. New threads use the built-in provider.
 
 **4. Quit and reopen the ChatGPT app.** Opus 5.5 appears in Codex's model picker, along with DeepSeek and Kimi if you added a key.
 
