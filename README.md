@@ -80,6 +80,8 @@ The router reads the file on every request, so a new key takes effect without a 
 
 ```toml
 model_provider = "router"
+experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"
+experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"
 
 [model_providers.router]
 name = "Codex model router"
@@ -89,6 +91,8 @@ requires_openai_auth = true
 ```
 
 `requires_openai_auth = true` makes Codex send your ChatGPT sign-in to the router. The router forwards it only to chatgpt.com.
+
+The two `experimental_realtime_*` lines keep the ChatGPT app's Voice button working. Codex sends voice to the model provider's URL and picks the request format from that URL. Without these lines, voice goes to the router in the API-key format, and chatgpt.com answers 404. With them, voice goes straight to OpenAI, as it does without the router.
 
 **4. Quit and reopen the ChatGPT app.** Opus 5.5 appears in Codex's model picker, along with DeepSeek and Kimi if you added a key.
 
