@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/claude"
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/config"
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/claude"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/config"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/responses"
 )
 
 // sessions holds one Session per Codex thread. Lock order: a Session's mu may

@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/bridge"
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/config"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/bridge"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/config"
 )
 
 func main() {

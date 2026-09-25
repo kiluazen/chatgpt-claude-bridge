@@ -4,8 +4,8 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/claude"
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/claude"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/responses"
 )
 
 func TestUsageReportsNewestCallContext(t *testing.T) {

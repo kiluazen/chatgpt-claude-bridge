@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/responses"
 )
 
 func registry(t *testing.T) *Registry {

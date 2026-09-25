@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/kiluazen/chatgpt-claude-bridge/internal/responses"
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/responses"
 )
 
 // unreadablePayload stands in for an agent message payload an OpenAI model
