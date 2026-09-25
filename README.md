@@ -135,7 +135,7 @@ Then run `make install-router` and reopen the ChatGPT app.
 - `~/.codex/claude-bridge-state/`: each Claude session's id, state and system prompt
 - Claude Code's own transcripts of those sessions, under `~/.claude/projects/`
 
-Both services listen on 127.0.0.1 only. The bridge's MCP endpoint path includes a random secret for each session. Your ChatGPT sign-in goes only to chatgpt.com and your OpenRouter key only to openrouter.ai. The bridge gets neither, and it never reads your Claude credentials: it runs the official `claude` CLI, which uses its own login.
+Both services listen on 127.0.0.1 only. The bridge's MCP endpoint path includes a random secret for each session. The router passes requests to OpenAI as Codex sent them, with one exception: agent messages from Claude, DeepSeek or Kimi become plain text so GPT can read them. OpenRouter requests get the output cap, and agent messages rewritten as user messages, since OpenRouter doesn't know Codex's agent-message type. Your ChatGPT sign-in goes only to chatgpt.com and your OpenRouter key only to openrouter.ai. The bridge gets neither, and it never reads your Claude credentials: it runs the official `claude` CLI, which uses its own login.
 
 ## Troubleshooting
 
