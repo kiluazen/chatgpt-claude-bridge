@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/kiluazen/chatgpt-claude-bridge/router/internal/catalog"
 	"github.com/kiluazen/chatgpt-claude-bridge/router/models"
 )
@@ -22,6 +25,7 @@ type seen struct {
 	path   string
 	header http.Header
 	body   map[string]any
+	raw    []byte
 }
 
 // fakeUpstream records each request and answers with respond.
@@ -31,7 +35,7 @@ func fakeUpstream(t *testing.T, got chan<- seen, respond http.HandlerFunc) *http
 		data, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		json.Unmarshal(data, &body)
-		got <- seen{r.URL.RequestURI(), r.Header.Clone(), body}
+		got <- seen{r.URL.RequestURI(), r.Header.Clone(), body, data}
 		respond(w, r)
 	}))
 	t.Cleanup(srv.Close)
@@ -41,6 +45,7 @@ func fakeUpstream(t *testing.T, got chan<- seen, respond http.HandlerFunc) *http
 func ok(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, `{}`) }
 
 type harness struct {
+	srv                        *Server
 	router                     *httptest.Server
 	native, openrouter, bridge chan seen
 }
@@ -55,7 +60,7 @@ func withKey() (string, error) { return "sk-or-test", nil }
 
 func newHarness(t *testing.T, key func() (string, error), native, openrouter, bridge http.HandlerFunc) harness {
 	t.Helper()
-	h := harness{native: make(chan seen, 4), openrouter: make(chan seen, 4), bridge: make(chan seen, 4)}
+	h := harness{native: make(chan seen, 16), openrouter: make(chan seen, 16), bridge: make(chan seen, 16)}
 	external, err := catalog.Load(models.FS)
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +80,7 @@ func newHarness(t *testing.T, key func() (string, error), native, openrouter, br
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.srv = srv
 	h.router = httptest.NewServer(srv)
 	t.Cleanup(h.router.Close)
 	return h
@@ -157,8 +163,8 @@ func catalogOf(t *testing.T, key func() (string, error)) (string, harness) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.Header.Get("ETag") != "" {
-		t.Errorf("catalog kept OpenAI's ETag")
+	if resp.Header.Get("ETag") != `"v1"` {
+		t.Errorf("catalog ETag %q, want OpenAI's", resp.Header.Get("ETag"))
 	}
 	var cat struct {
 		Models []struct {
@@ -244,6 +250,33 @@ func TestStreamsAndHangsUp(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("in_flight never went back to 0")
+}
+
+func TestCompressedRequests(t *testing.T) {
+	h := newHarness(t, withKey, ok, ok, ok)
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(model string) []byte {
+		body := enc.EncodeAll([]byte(`{"model":"`+model+`","input":[]}`), nil)
+		req, _ := http.NewRequest(http.MethodPost, h.router.URL+"/backend-api/codex/responses", bytes.NewReader(body))
+		req.Header.Set("Content-Encoding", "zstd")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return body
+	}
+	sent := send("gpt-6-sol")
+	if native := receive(t, h.native); !bytes.Equal(native.raw, sent) || native.header.Get("Content-Encoding") != "zstd" {
+		t.Errorf("OpenAI did not get Codex's compressed bytes: %q", native.header.Get("Content-Encoding"))
+	}
+	send("claude-opus-5-5")
+	if bridge := receive(t, h.bridge); bridge.body["model"] != "claude-opus-5-5" || bridge.header.Get("Content-Encoding") != "" {
+		t.Errorf("bridge got %q, Content-Encoding %q", bridge.raw, bridge.header.Get("Content-Encoding"))
+	}
 }
 
 func TestRejectsWhatItCannotRoute(t *testing.T) {

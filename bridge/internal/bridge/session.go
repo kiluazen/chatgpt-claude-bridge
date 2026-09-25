@@ -100,8 +100,11 @@ type call struct {
 }
 
 type compaction struct {
-	stream *responses.Stream
-	meta   claude.CompactMetadata
+	stream  *responses.Stream
+	item    bool // Codex asked for a compaction item, not a summary message
+	meta    claude.CompactMetadata
+	done    bool   // Claude Code compacted
+	summary string // the summary Claude Code reported after compacting
 }
 
 // pendingCall is an MCP tools/call waiting for Codex to run the tool.
@@ -314,16 +317,24 @@ func (s *Session) serve(st *responses.Stream, req *responses.Request) {
 }
 
 // compact answers a Codex compaction with Claude Code's own /compact. Claude
-// keeps its context; Codex's summary of it is never sent.
+// keeps its context; Codex's summary of it is never sent. When Codex asks for
+// a compaction item, it gets Claude Code's summary, which the models that
+// read the thread after a switch get as its earlier part.
 func (s *Session) compact(req *responses.Request) {
 	translate.NewInput(req.Input, s.seen, false) // what Codex replays counts as seen
+	item := translate.IsCompactionTrigger(req)
 	if s.running {
-		s.stream.Delta("Claude Code manages this thread's context itself, so Codex's summary is not used for Claude.")
+		const text = "Claude Code manages this thread's context itself, so Codex's summary is not used for Claude."
+		if item {
+			s.stream.Add(responses.NewCompaction(text))
+		} else {
+			s.stream.Delta(text)
+		}
 		s.complete(s.lastCtx)
 		s.strict = true
 		return
 	}
-	s.compaction = &compaction{stream: s.stream}
+	s.compaction = &compaction{stream: s.stream, item: item}
 	if err := s.sendCommand("/compact"); err != nil {
 		s.compaction = nil
 		s.fail(failureFor(err))
@@ -399,6 +410,12 @@ func (s *Session) handle(ev claude.Event) {
 		if l := ev.RateLimit; l != nil {
 			slog.Info("claude limit", "session", s.id, "status", l.Status, "window", l.RateLimitType, "overage", l.IsUsingOverage)
 		}
+	case "user":
+		// Claude Code reports its summary as the first user message after it
+		// compacts.
+		if c := s.compaction; c != nil && c.done && c.summary == "" {
+			c.summary = ev.UserText()
+		}
 	case "stream_event":
 		s.streamEvent(ev.Stream)
 	case "assistant":
@@ -417,7 +434,7 @@ func (s *Session) handle(ev claude.Event) {
 
 func (s *Session) compacted(m claude.CompactMetadata) {
 	if s.compaction != nil {
-		s.compaction.meta = m
+		s.compaction.meta, s.compaction.done = m, true
 		return
 	}
 	slog.Info("claude compacted", "session", s.id, "pre", m.PreTokens, "post", m.PostTokens, "trigger", m.Trigger)
@@ -562,7 +579,15 @@ func (s *Session) finishTurn(ev claude.Event) {
 	if c := s.compaction; c != nil {
 		s.compaction = nil
 		if s.stream == c.stream {
-			s.stream.Delta(translate.CompactReply(c.meta))
+			switch {
+			case !c.done && (ev.IsError || ev.Subtype != "success"):
+				s.fail(translate.Failure(cmp.Or(ev.Result, strings.Join(ev.Errors, "; "), ev.Subtype), s.rateLimit, false))
+				return
+			case c.item:
+				s.stream.Add(responses.NewCompaction(cmp.Or(c.summary, translate.CompactReply(c.meta))))
+			default:
+				s.stream.Delta(translate.CompactReply(c.meta))
+			}
 			s.complete(translate.ContextSize{Tokens: c.meta.PostTokens})
 		}
 		s.strict = true

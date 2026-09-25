@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 codex=/Applications/ChatGPT.app/Contents/Resources/codex
-env=""
+env="" after=:
 case "${1:-}" in
 bridge)
   name=chatgpt-claude-bridge port=41420 busy=busy
@@ -19,6 +19,10 @@ bridge)
   ;;
 router)
   name=codex-model-router port=41419 busy=in_flight
+  # Codex keeps its model catalog for as long as OpenAI's catalog is
+  # unchanged, so it would not see a new picker. Without the cache, the
+  # reopened app fetches the catalog again.
+  after="rm -f ${CODEX_HOME:-$HOME/.codex}/models_cache.json"
   ;;
 *)
   echo "usage: $0 bridge|router" >&2
@@ -69,7 +73,7 @@ done
 launchctl bootstrap "gui/$(id -u)" "$plist"
 
 for _ in $(seq 50); do
-  if curl -fs -m 1 "$health"; then echo; exit 0; fi
+  if curl -fs -m 1 "$health"; then echo; $after; exit 0; fi
   sleep 0.2
 done
 echo "$name did not come up; see $logs/$name.log" >&2

@@ -70,3 +70,19 @@ func TestDecodeEvents(t *testing.T) {
 	// A user event's message may carry string content; it must not break decoding.
 	must(`{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>"}}`)
 }
+
+func TestUserText(t *testing.T) {
+	for line, want := range map[string]string{
+		`{"type":"user","message":{"role":"user","content":"This session is being continued. Summary: x"}}`:                            "This session is being continued. Summary: x",
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"a"},{"type":"image"},{"type":"text","text":"b"}]}}`: "ab",
+		`{"type":"user"}`: "",
+	} {
+		var ev Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if got := ev.UserText(); got != want {
+			t.Errorf("%s: %q", line, got)
+		}
+	}
+}

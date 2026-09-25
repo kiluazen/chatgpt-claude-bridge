@@ -129,10 +129,11 @@ func TestNewInputAgentMessages(t *testing.T) {
 	}
 }
 
+// fernet is a Fernet token, as OpenAI's encrypted content arrives.
+const fernet = "gAAAAABqtNzW8E9RElMT83aBrlaAXBg8KryjzwzkyDkVz0pDy07k_SVN3fBYPqoD32hkIwrB9t69Clor_Yj1zmitfIGOA1QtV1ZlIPNqtuxIXT7adzt26N99kd4PsDlGLphhKWQ5NeCHuYD1RTZ33NkjUwSclHk9VvW-OmUFrdVGKOXOhIA-02YA8Cxvbe7NKepKMimwCVKr"
+
 func TestAgentMessageCiphertext(t *testing.T) {
-	// A Fernet token, as OpenAI models' agent messages arrive.
-	token := "gAAAAABqtNzW8E9RElMT83aBrlaAXBg8KryjzwzkyDkVz0pDy07k_SVN3fBYPqoD32hkIwrB9t69Clor_Yj1zmitfIGOA1QtV1ZlIPNqtuxIXT7adzt26N99kd4PsDlGLphhKWQ5NeCHuYD1RTZ33NkjUwSclHk9VvW-OmUFrdVGKOXOhIA-02YA8Cxvbe7NKepKMimwCVKr"
-	it := items(t, `[{"type":"agent_message","content":[{"type":"input_text","text":"Payload:\n"},{"type":"encrypted_content","encrypted_content":"`+token+`"}]}]`)[0]
+	it := items(t, `[{"type":"agent_message","content":[{"type":"input_text","text":"Payload:\n"},{"type":"encrypted_content","encrypted_content":"`+fernet+`"}]}]`)[0]
 	if got := AgentMessageText(it); got != "Payload:\n"+unreadablePayload {
 		t.Fatalf("got %q", got)
 	}
@@ -218,10 +219,32 @@ func TestIsCompaction(t *testing.T) {
 		{"prompt", responses.Request{Input: items(t, `[{"type":"message","role":"user","content":[{"type":"input_text","text":"You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff"}]}]`)}, true},
 		{"turn", responses.Request{ClientMetadata: map[string]string{"x-codex-turn-metadata": `{"request_kind":"turn"}`},
 			Input: items(t, `[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]`)}, false},
+		{"trigger", responses.Request{Input: items(t, `[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"compaction_trigger"}]`)}, true},
 	}
 	for _, c := range cases {
 		if got := IsCompaction(&c.req); got != c.want {
 			t.Errorf("%s: got %v", c.name, got)
 		}
+		if got := IsCompactionTrigger(&c.req); got != (c.name == "trigger") {
+			t.Errorf("%s: IsCompactionTrigger %v", c.name, got)
+		}
+	}
+}
+
+func TestCompactionsInHistory(t *testing.T) {
+	thread := items(t, `[
+		{"type":"compaction","encrypted_content":"`+fernet+`"},
+		{"type":"compaction","encrypted_content":"The user wants the parser fixed."},
+		{"type":"message","id":"u1","role":"user","content":[{"type":"input_text","text":"go on"}]}]`)
+	messages, _ := NewInput(thread, NewSeen(nil, nil), false)
+	blocks := blocksOf(messages)
+	want := []claude.Block{claude.Text(sealedSummary), claude.Text(compactionSummaryTag + "The user wants the parser fixed."), claude.Text("[user] go on")}
+	if !reflect.DeepEqual(blocks, want) {
+		t.Errorf("history blocks %#v", blocks)
+	}
+	// Claude holds its own context once it has seen the thread.
+	more := append(thread, items(t, `[{"type":"compaction","encrypted_content":"again"},{"type":"message","id":"u2","role":"user","content":[{"type":"input_text","text":"next"}]}]`)...)
+	if messages, _ := NewInput(more, NewSeen([]string{"u1"}, nil), false); !reflect.DeepEqual(ids(messages), []string{"u2"}) {
+		t.Errorf("seen thread passed %v", ids(messages))
 	}
 }

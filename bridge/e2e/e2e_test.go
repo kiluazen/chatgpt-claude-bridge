@@ -34,6 +34,7 @@ const (
 var bridge struct {
 	bin, state string
 	cmd        *exec.Cmd
+	catalog    string // Codex's catalog entry for the model, which enables its tools
 }
 
 func TestMain(m *testing.M) {
@@ -44,6 +45,16 @@ func TestMain(m *testing.M) {
 	bridge.bin, bridge.state = filepath.Join(dir, "bridge"), filepath.Join(dir, "state")
 	if out, err := exec.Command("go", "build", "-o", bridge.bin, "../cmd/chatgpt-claude-bridge").CombinedOutput(); err != nil {
 		panic(fmt.Sprintf("build: %v\n%s", err, out))
+	}
+	// Codex gets the model's metadata, such as its apply_patch tool, from its
+	// catalog. The router serves this entry; here Codex reads it from a file.
+	entry, err := os.ReadFile("../../router/models/bridge/" + model + ".json")
+	if err != nil {
+		panic(err)
+	}
+	bridge.catalog = filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(bridge.catalog, []byte(`{"models":[`+string(entry)+`]}`), 0o644); err != nil {
+		panic(err)
 	}
 	if err := startBridge(); err != nil {
 		panic(err)
@@ -115,6 +126,7 @@ func codexTurn(t *testing.T, dir, prompt string) turn {
 	cmd := exec.CommandContext(ctx, codexBin, "exec", "--json", "--skip-git-repo-check", "-m", model,
 		"-c", `model_provider="e2e"`,
 		"-c", `model_providers.e2e={name="e2e",base_url="http://`+addr+`/api/v1",wire_api="responses",requires_openai_auth=true,stream_max_retries=2}`,
+		"-c", fmt.Sprintf("model_catalog_json=%q", bridge.catalog),
 		prompt)
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -214,13 +226,15 @@ func TestUnknownSlashCommandStaysText(t *testing.T) {
 // reply is the outcome of one raw Responses request.
 type reply struct {
 	text, status, code string
+	compaction         string // the summary of a compaction item
 }
 
 type message struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Content []part `json:"content"`
+	ID               string `json:"id,omitempty"`
+	Type             string `json:"type"`
+	Role             string `json:"role,omitempty"`
+	Content          []part `json:"content,omitempty"`
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 }
 
 type part struct {
@@ -264,8 +278,9 @@ func respond(t *testing.T, thread, kind string, input []message, stopAfter int, 
 			continue
 		}
 		var e struct {
-			Type     string `json:"type"`
-			Delta    string `json:"delta"`
+			Type     string  `json:"type"`
+			Delta    string  `json:"delta"`
+			Item     message `json:"item"`
 			Response struct {
 				Status string `json:"status"`
 				Error  struct {
@@ -285,6 +300,10 @@ func respond(t *testing.T, thread, kind string, input []message, stopAfter int, 
 			}
 			if stopAfter > 0 && deltas >= stopAfter {
 				return r
+			}
+		case "response.output_item.done":
+			if e.Item.Type == "compaction" {
+				r.compaction = e.Item.EncryptedContent
 			}
 		case "response.completed", "response.failed":
 			r.status, r.code = e.Response.Status, e.Response.Error.Code
@@ -313,6 +332,27 @@ func TestCompactionUsesClaudesOwnCompact(t *testing.T) {
 		msg("s1", "user", "Another language model started to solve this problem and produced a summary of its thinking process..."),
 		msg("u2", "user", "What was the codeword? Reply with just the codeword.")}, 0, nil)
 	if r.status != "completed" || !strings.Contains(r.text, "KESTREL-44") {
+		t.Fatalf("after compaction: %+v", r)
+	}
+}
+
+// Codex compacts through OpenAI's provider with a compaction trigger and
+// reads back one compaction item.
+func TestCompactionItemCarriesClaudesSummary(t *testing.T) {
+	thread := fmt.Sprintf("e2e-compact-item-%d", time.Now().UnixNano())
+	first := msg("u1", "user", "Remember the codeword OSPREY-71. Reply only: noted")
+	if r := respond(t, thread, "turn", []message{first}, 0, nil); r.status != "completed" {
+		t.Fatalf("turn 1: %+v", r)
+	}
+	compact := respond(t, thread, "compact", []message{first, msg("a1", "assistant", "noted"), {Type: "compaction_trigger"}}, 0, nil)
+	if compact.status != "completed" || !strings.Contains(compact.compaction, "OSPREY-71") || compact.text != "" {
+		t.Fatalf("compaction: %+v", compact)
+	}
+	// Codex keeps the recent messages and the compaction item.
+	r := respond(t, thread, "turn", []message{msg("u1b", "user", first.Content[0].Text),
+		{Type: "compaction", EncryptedContent: compact.compaction},
+		msg("u2", "user", "What was the codeword? Reply with just the codeword.")}, 0, nil)
+	if r.status != "completed" || !strings.Contains(r.text, "OSPREY-71") {
 		t.Fatalf("after compaction: %+v", r)
 	}
 }

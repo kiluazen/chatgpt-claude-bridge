@@ -69,6 +69,19 @@ type WebAction struct {
 	URL   string `json:"url,omitempty"`
 }
 
+// Compaction answers a compaction Codex asks for: the summary that stands in
+// for the thread before it. OpenAI encrypts its summaries; this one is plain
+// text.
+type Compaction struct {
+	ID               string `json:"id"`
+	Type             string `json:"type"`
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+func NewCompaction(summary string) Compaction {
+	return Compaction{ID: "cmp_" + NewID(), Type: TypeCompaction, EncryptedContent: summary}
+}
+
 func NewFunctionCall(callID, name, namespace, arguments string) FunctionCall {
 	return FunctionCall{ID: "fc_" + NewID(), Type: "function_call", Status: "completed", CallID: callID,
 		Name: name, Namespace: namespace, Arguments: arguments}
@@ -106,6 +119,8 @@ func (c CustomToolCall) inProgress() OutputItem {
 	c.Status = "in_progress"
 	return c
 }
+
+func (c Compaction) inProgress() OutputItem { return c }
 
 func (c WebSearchCall) inProgress() OutputItem {
 	c.Status = "in_progress"

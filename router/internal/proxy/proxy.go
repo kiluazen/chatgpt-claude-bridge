@@ -16,8 +16,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/kiluazen/chatgpt-claude-bridge/router/internal/catalog"
 	"github.com/kiluazen/chatgpt-claude-bridge/router/internal/upstream"
@@ -41,13 +44,17 @@ type Server struct {
 	external  []catalog.Model
 	routes    map[string]upstream.Route // external model slug to its upstream
 	transport http.RoundTripper
+	client    *http.Client
 	started   time.Time
-	inFlight  atomic.Int64
+	inFlight  atomic.Int64 // requests, and responses on websockets
+	sessions  sync.Map     // *wsSession: Codex's open websockets
+	draining  atomic.Bool
 }
 
 func New(cfg Config, external []catalog.Model) (*Server, error) {
 	s := &Server{cfg: cfg, external: external, routes: map[string]upstream.Route{},
 		transport: http.DefaultTransport, started: time.Now()}
+	s.client = &http.Client{Transport: s.transport}
 	for _, m := range external {
 		switch r := upstream.Route(m.Upstream); r {
 		case upstream.OpenRouter, upstream.Bridge:
@@ -59,12 +66,18 @@ func New(cfg Config, external []catalog.Model) (*Server, error) {
 	return s, nil
 }
 
-// InFlight is the number of requests being forwarded.
+// InFlight is the number of requests being forwarded, counting each response
+// on a websocket.
 func (s *Server) InFlight() int64 { return s.inFlight.Load() }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && r.URL.Path == "/health" {
 		s.health(w)
+		return
+	}
+	if isWebsocket(r) && strings.HasSuffix(r.URL.Path, "/responses") {
+		// A websocket stays open between responses; each is counted alone.
+		s.serveResponsesWebsocket(w, r)
 		return
 	}
 	s.inFlight.Add(1)
@@ -87,6 +100,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(rec, f.status, err.Error())
 		return
 	}
+	if f.compaction {
+		s.serveCompaction(rec, r, f)
+		return
+	}
 	s.forward(rec, r, f)
 }
 
@@ -98,7 +115,11 @@ type forwarding struct {
 	body    []byte
 	apiKey  string // OpenRouter's
 	catalog bool   // a model catalog, to add the external models to
+	rewrote bool   // the body is the router's JSON, not Codex's possibly compressed bytes
 	status  int    // the error status when the request cannot be forwarded
+	// compaction: the body asks for the summary of a compaction that the
+	// router answers itself, for a model that cannot compact.
+	compaction bool
 }
 
 // plan decides where a request goes. Responses requests go by model; every
@@ -110,37 +131,78 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) (forwarding, error
 		return f, fmt.Errorf("read request: %w", err)
 	}
 	f.body = body
-	rest, ok := strings.CutPrefix(r.URL.Path, "/api/v1/")
-	if !ok {
+	if f.url, err = s.nativeURL(r.URL); err != nil {
 		f.status = http.StatusNotFound
-		return f, fmt.Errorf("no route for %s; Codex's base URL is /api/v1", r.URL.Path)
+		return f, err
 	}
-	f.url = s.cfg.NativeURL.JoinPath(rest)
-	f.url.RawQuery = r.URL.RawQuery
 	f.catalog = r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models")
 	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/responses") {
 		return f, nil
 	}
 
-	req, err := upstream.Parse(body)
+	plain, err := decodeBody(r.Header, body)
+	if err != nil {
+		return f, err
+	}
+	req, err := upstream.Parse(plain)
 	if err != nil {
 		return f, err
 	}
 	f.model = req.Model()
-	switch f.route = cmp.Or(s.routes[f.model], upstream.Native); f.route {
-	case upstream.Native:
-		f.body, err = req.ForNative()
-	case upstream.OpenRouter:
-		f.url = s.cfg.OpenRouterURL.JoinPath("responses")
-		if f.apiKey, err = s.cfg.OpenRouterKey(); err != nil {
-			f.status = http.StatusBadGateway
-			return f, err
-		}
-		f.body, err = req.ForOpenRouter(s.cfg.MaxOutputTokens)
-	case upstream.Bridge:
-		f.url = s.cfg.BridgeURL.JoinPath("responses")
+	if f.route = s.route(f.model); f.route != upstream.Native {
+		return f, s.forExternal(&f, req, plain)
+	}
+	// Codex's bytes go to OpenAI as they are, compressed or not, unless
+	// another model's history needed fixing.
+	var fixed []byte
+	if fixed, f.rewrote, err = req.ForNative(); f.rewrote {
+		f.body = fixed
 	}
 	return f, err
+}
+
+// route is the upstream serving model.
+func (s *Server) route(model string) upstream.Route {
+	return cmp.Or(s.routes[model], upstream.Native)
+}
+
+// forExternal points f at the upstream serving an external model. body is
+// the request as plain JSON, which the bridge reads as it is; OpenRouter gets
+// its own form of the request.
+func (s *Server) forExternal(f *forwarding, req *upstream.Request, body []byte) error {
+	switch f.route {
+	case upstream.OpenRouter:
+		f.url = s.cfg.OpenRouterURL.JoinPath("responses")
+		key, err := s.cfg.OpenRouterKey()
+		if err != nil {
+			f.status = http.StatusBadGateway
+			return err
+		}
+		f.apiKey = key
+		if f.compaction = req.IsCompaction(); f.compaction {
+			if err := req.ForSummary(); err != nil {
+				return err
+			}
+		}
+		f.body, err = req.ForOpenRouter(s.cfg.MaxOutputTokens)
+		return err
+	case upstream.Bridge:
+		f.url = s.cfg.BridgeURL.JoinPath("responses")
+		f.body = body
+	}
+	return nil
+}
+
+// externalHeader is all an external upstream gets of a request's headers.
+// The ChatGPT auth and account reach OpenAI only.
+func (f forwarding) externalHeader(contentType, accept string) http.Header {
+	h := http.Header{}
+	h.Set("Content-Type", cmp.Or(contentType, "application/json"))
+	h.Set("Accept", cmp.Or(accept, "text/event-stream"))
+	if f.apiKey != "" {
+		h.Set("Authorization", "Bearer "+f.apiKey)
+	}
+	return h
 }
 
 func (s *Server) forward(w http.ResponseWriter, r *http.Request, f forwarding) {
@@ -158,14 +220,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, f forwarding) {
 					out.Header.Del("If-None-Match")
 					out.Header.Set("Accept-Encoding", "identity")
 				}
-			default:
-				h := http.Header{}
-				h.Set("Content-Type", cmp.Or(pr.In.Header.Get("Content-Type"), "application/json"))
-				h.Set("Accept", cmp.Or(pr.In.Header.Get("Accept"), "text/event-stream"))
-				if f.apiKey != "" {
-					h.Set("Authorization", "Bearer "+f.apiKey)
+				if f.rewrote {
+					out.Header.Del("Content-Encoding")
 				}
-				out.Header = h
+			default:
+				out.Header = f.externalHeader(pr.In.Header.Get("Content-Type"), pr.In.Header.Get("Accept"))
 			}
 		},
 		Transport:     s.transport,
@@ -184,8 +243,60 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, f forwarding) {
 	rp.ServeHTTP(w, r)
 }
 
+// Codex addresses the router as OpenAI's Codex backend, at /backend-api/codex.
+// /api/v1 is where a custom Codex model provider pointed before; both reach
+// the same routes.
+var basePaths = []string{"/backend-api/codex/", "/api/v1/"}
+
+// nativeURL is where OpenAI serves the path Codex asked for.
+func (s *Server) nativeURL(u *url.URL) (*url.URL, error) {
+	for _, base := range basePaths {
+		if rest, ok := strings.CutPrefix(u.Path, base); ok {
+			native := s.cfg.NativeURL.JoinPath(rest)
+			native.RawQuery = u.RawQuery
+			return native, nil
+		}
+	}
+	return nil, fmt.Errorf("no route for %s; Codex's base URL is /backend-api/codex", u.Path)
+}
+
+// zstdDecoder reads the zstd bodies Codex sends OpenAI's backend.
+var zstdDecoder = mustZstd()
+
+func mustZstd() *zstd.Decoder {
+	d, err := zstd.NewReader(nil, zstd.WithDecoderMaxMemory(512<<20))
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+// decodeBody is a request body as JSON, decompressed when Codex compressed it.
+func decodeBody(h http.Header, body []byte) ([]byte, error) {
+	switch enc := h.Get("Content-Encoding"); enc {
+	case "", "identity":
+		return body, nil
+	case "zstd":
+		plain, err := zstdDecoder.DecodeAll(body, nil)
+		if err != nil {
+			return nil, fmt.Errorf("decompress request: %w", err)
+		}
+		return plain, nil
+	default:
+		return nil, fmt.Errorf("unsupported request Content-Encoding %q", enc)
+	}
+}
+
+func isWebsocket(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
 // addExternal adds the external models to OpenAI's model catalog. A catalog
 // it cannot read fails the request, so Codex keeps the catalog it has.
+//
+// The merged catalog keeps OpenAI's ETag. Codex compares it with the catalog
+// version OpenAI reports alongside each response, and waits on a fresh
+// catalog whenever they differ.
 func (s *Server) addExternal(resp *http.Response) error {
 	if resp.StatusCode != http.StatusOK {
 		return nil
@@ -201,7 +312,7 @@ func (s *Server) addExternal(resp *http.Response) error {
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(merged))
 	resp.ContentLength = int64(len(merged))
-	for _, h := range []string{"Content-Encoding", "ETag", "Transfer-Encoding"} {
+	for _, h := range []string{"Content-Encoding", "Transfer-Encoding"} {
 		resp.Header.Del(h)
 	}
 	resp.Header.Set("Content-Length", strconv.Itoa(len(merged)))

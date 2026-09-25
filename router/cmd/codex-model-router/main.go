@@ -29,15 +29,16 @@ const drainTimeout = 5 * time.Minute
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	configPath := flag.String("config", "~/.codex/model-router.json", "settings file; optional")
-	addr := flag.String("addr", "127.0.0.1:41419", "where Codex's model provider points")
+	addr := flag.String("addr", "127.0.0.1:41419", "where Codex's base URL points")
+	bridgeURL := flag.String("bridge", "http://127.0.0.1:41420/api/v1", "the Claude Code bridge")
 	flag.Parse()
-	if err := serve(*configPath, *addr); err != nil {
+	if err := serve(*configPath, *addr, *bridgeURL); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func serve(configPath, addr string) error {
+func serve(configPath, addr, bridgeURL string) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
@@ -49,7 +50,7 @@ func serve(configPath, addr string) error {
 	srv, err := proxy.New(proxy.Config{
 		NativeURL:       mustURL("https://chatgpt.com/backend-api/codex"),
 		OpenRouterURL:   mustURL("https://openrouter.ai/api/v1"),
-		BridgeURL:       mustURL("http://127.0.0.1:41420/api/v1"),
+		BridgeURL:       mustURL(bridgeURL),
 		OpenRouterKey:   cfg.OpenRouterKey,
 		MaxOutputTokens: cfg.MaxOutputTokens,
 		Picker:          catalog.Picker{Order: cfg.Picker, Hide: cfg.Hide},
@@ -58,6 +59,7 @@ func serve(configPath, addr string) error {
 		return err
 	}
 	httpSrv := &http.Server{Addr: addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
+	httpSrv.RegisterOnShutdown(srv.Drain) // Shutdown does not see websockets
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -76,6 +78,9 @@ func serve(configPath, addr string) error {
 	defer cancel()
 	if err := httpSrv.Shutdown(drainCtx); err != nil {
 		return fmt.Errorf("drain: %w", err)
+	}
+	if err := srv.Wait(drainCtx); err != nil {
+		return fmt.Errorf("drain websockets: %w", err)
 	}
 	return nil
 }

@@ -116,8 +116,41 @@ func Merge(native []byte, external []Model, p Picker) ([]byte, error) {
 			merged = append(merged, e)
 		}
 	}
+	// Codex compacts a thread when it switches between models whose
+	// comp_hash differs, and OpenAI encrypts its compaction summaries for
+	// OpenAI models alone. External models take the comp_hash of the native
+	// model at the top of the picker, so switching between them hands the
+	// thread over as it is.
+	if hash := topNativeCompHash(merged, ours); hash != nil {
+		for _, e := range merged {
+			if ours[e.slug()] {
+				e["comp_hash"] = hash
+			}
+		}
+	}
 	cat["models"] = encode(merged)
 	return encode(cat), nil
+}
+
+// topNativeCompHash is the comp_hash of the shown native model with the
+// highest place in the picker, or nil.
+func topNativeCompHash(entries []entry, external map[string]bool) json.RawMessage {
+	var hash json.RawMessage
+	best := 0
+	for _, e := range entries {
+		var visibility string
+		var priority int
+		json.Unmarshal(e["visibility"], &visibility)
+		json.Unmarshal(e["priority"], &priority)
+		h := e["comp_hash"]
+		if external[e.slug()] || visibility == "hide" || len(h) == 0 || string(h) == "null" {
+			continue
+		}
+		if hash == nil || priority < best {
+			hash, best = h, priority
+		}
+	}
+	return hash
 }
 
 // encode marshals values that always encode, keeping < > & as they are.

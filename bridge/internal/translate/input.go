@@ -20,6 +20,13 @@ const CompactionPrompt = "You are performing a CONTEXT CHECKPOINT COMPACTION"
 // compactionSummary starts the summary Codex puts in a compacted thread.
 const compactionSummary = "Another language model started to solve this problem"
 
+// compactionSummaryTag opens a compaction's summary in history Claude has not
+// seen, such as a thread another model compacted.
+const compactionSummaryTag = "[summary of the earlier conversation] "
+
+// sealedSummary stands in for a compaction summary OpenAI encrypted.
+const sealedSummary = "[The earlier part of this conversation was summarized by OpenAI and encrypted for OpenAI models; it cannot be read here.]"
+
 // blockedCommands are Claude Code commands that would pull Claude's session
 // apart from the Codex thread.
 var blockedCommands = map[string]bool{
@@ -138,7 +145,7 @@ func history(items []responses.InputItem, seen *Seen) (messages, outputs []respo
 			seen.add(it.ID, contentHash(it))
 		case responses.TypeFunctionOutput, responses.TypeCustomOutput:
 			outputs = append(outputs, it)
-		case responses.TypeFunctionCall, responses.TypeCustomCall:
+		case responses.TypeFunctionCall, responses.TypeCustomCall, responses.TypeCompaction, responses.TypeContextCompaction:
 		default:
 			continue
 		}
@@ -177,6 +184,11 @@ func ItemBlocks(it responses.InputItem) []claude.Block {
 		return []claude.Block{claude.Text(fmt.Sprintf("[tool call %s] %s\n%s", it.CallID, it.Name, clip(it.Input)))}
 	case responses.TypeFunctionOutput, responses.TypeCustomOutput:
 		return []claude.Block{claude.Text(fmt.Sprintf("[tool result %s] %s", it.CallID, clip(outputText(it.Output))))}
+	case responses.TypeCompaction, responses.TypeContextCompaction:
+		if isCiphertext(it.EncryptedContent) {
+			return []claude.Block{claude.Text(sealedSummary)}
+		}
+		return []claude.Block{claude.Text(compactionSummaryTag + it.EncryptedContent)}
 	}
 	var blocks []claude.Block
 	text := func(s string) {
@@ -241,10 +253,10 @@ func blocksOf(messages []responses.InputItem) []claude.Block {
 	return blocks
 }
 
-// IsCompaction reports whether Codex is asking for a context compaction,
-// either by request kind or by its compaction prompt.
+// IsCompaction reports whether Codex is asking for a context compaction, by
+// request kind, by a compaction trigger or by its compaction prompt.
 func IsCompaction(r *responses.Request) bool {
-	if strings.Contains(strings.ToLower(r.Kind()), "compact") {
+	if strings.Contains(strings.ToLower(r.Kind()), "compact") || IsCompactionTrigger(r) {
 		return true
 	}
 	for i := len(r.Input) - 1; i >= 0; i-- {
@@ -253,4 +265,12 @@ func IsCompaction(r *responses.Request) bool {
 		}
 	}
 	return false
+}
+
+// IsCompactionTrigger reports whether Codex asks for the compaction as a
+// compaction item, by ending the request with a compaction trigger, rather
+// than as a summary message.
+func IsCompactionTrigger(r *responses.Request) bool {
+	n := len(r.Input)
+	return n > 0 && r.Input[n-1].Type == responses.TypeCompactionTrigger
 }

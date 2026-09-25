@@ -3,7 +3,10 @@
 // requests to it.
 package claude
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Event is one line of Claude Code's stream-json output. Which fields are set
 // depends on Type and Subtype.
@@ -76,6 +79,33 @@ type RateLimit struct {
 	RateLimitType  string `json:"rateLimitType"`
 	ResetsAt       int64  `json:"resetsAt"`
 	IsUsingOverage bool   `json:"isUsingOverage"`
+}
+
+// UserText is the text of a user event, such as the summary Claude Code
+// reports right after it compacts.
+func (e Event) UserText() string {
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(e.Message, &m) != nil {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(m.Content, &text) == nil {
+		return text
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	json.Unmarshal(m.Content, &blocks)
+	var b strings.Builder
+	for _, bl := range blocks {
+		if bl.Type == "text" {
+			b.WriteString(bl.Text)
+		}
+	}
+	return b.String()
 }
 
 // ToolUses returns the tool_use blocks of an assistant event.

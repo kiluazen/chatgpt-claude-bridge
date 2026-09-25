@@ -47,6 +47,13 @@ const (
 	TypeCustomCall     = "custom_tool_call"
 	TypeFunctionOutput = "function_call_output"
 	TypeCustomOutput   = "custom_tool_call_output"
+	// TypeCompaction is the summary that stands in for a compacted thread's
+	// earlier part: OpenAI's is encrypted, the bridge's and OpenRouter's are
+	// plain text. Codex asks for one by ending a request with a
+	// TypeCompactionTrigger.
+	TypeCompaction        = "compaction"
+	TypeContextCompaction = "context_compaction"
+	TypeCompactionTrigger = "compaction_trigger"
 )
 
 // InputItem is one entry of the thread Codex sends.
@@ -61,6 +68,8 @@ type InputItem struct {
 	Namespace string          `json:"namespace"`
 	Arguments string          `json:"arguments"` // function calls
 	Input     string          `json:"input"`     // custom tool calls
+	// EncryptedContent is a compaction's summary.
+	EncryptedContent string `json:"encrypted_content"`
 }
 
 // Author is the message role, "user" when unset.

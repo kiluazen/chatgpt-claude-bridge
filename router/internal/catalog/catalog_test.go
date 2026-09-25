@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -151,3 +152,39 @@ func TestShippedModels(t *testing.T) {
 		t.Fatalf("shipped models %v", got)
 	}
 }
+
+func TestMergeGivesExternalModelsTheTopNativeCompHash(t *testing.T) {
+	native := `{"models":[
+		{"slug":"gpt-6-astra","priority":1,"visibility":"list","comp_hash":"3000"},
+		{"slug":"gpt-6-sol","priority":2,"visibility":"list","comp_hash":"3000"},
+		{"slug":"gpt-5.5","priority":0,"visibility":"hide","comp_hash":"2911"},
+		{"slug":"gpt-5.4","priority":12,"visibility":"list","comp_hash":"2800"}]}`
+	opus := Model{Slug: "claude-opus-5-5", entry: entry{"slug": encode("claude-opus-5-5"), "comp_hash": encode("2911")}}
+	hashes := func(p Picker) map[string]string {
+		out, err := Merge([]byte(native), []Model{opus}, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cat struct {
+			Models []struct{ Slug, Comp_hash string }
+		}
+		json.Unmarshal(out, &cat)
+		m := map[string]string{}
+		for _, e := range cat.Models {
+			m[e.Slug] = e.Comp_hash
+		}
+		return m
+	}
+	if h := hashes(Picker{}); h["claude-opus-5-5"] != "3000" || h["gpt-5.4"] != "2800" {
+		t.Errorf("without an order: %v", h)
+	}
+	if h := hashes(Picker{Order: []string{"gpt-5.4", "claude-opus-5-5", "gpt-6-sol"}}); h["claude-opus-5-5"] != "2800" {
+		t.Errorf("with gpt-5.4 on top: %v", h)
+	}
+	if out, _ := Merge([]byte(`{"models":[{"slug":"gpt-x","priority":1}]}`), []Model{opus}, Picker{}); !json.Valid(out) ||
+		!bytesContains(out, `"comp_hash":"2911"`) {
+		t.Errorf("a catalog without comp_hash changed the entry's own: %s", out)
+	}
+}
+
+func bytesContains(b []byte, s string) bool { return strings.Contains(string(b), s) }
