@@ -1,4 +1,4 @@
-.PHONY: check e2e install install-bridge install-router
+.PHONY: check e2e install install-bridge install-router install-switch
 
 check:
 	test -z "$$(gofmt -l .)"
@@ -10,11 +10,16 @@ check:
 e2e:
 	go test -tags e2e -count=1 -v ./bridge/e2e
 
-# Builds both services and (re)starts them as launchd agents once idle.
-install: check install-bridge install-router
+# Builds both services and (re)starts them as launchd agents once idle, and
+# installs the codex-bridge on/off switch.
+install: check install-bridge install-router install-switch
 
 install-bridge:
 	scripts/install.sh bridge
 
 install-router:
 	scripts/install.sh router
+
+install-switch:
+	install -d $(HOME)/.local/bin
+	install -m 755 scripts/codex-bridge $(HOME)/.local/bin/codex-bridge

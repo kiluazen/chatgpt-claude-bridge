@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# codex-bridge on|off|status
+#
+# Switches Codex between the router, which adds Claude and OpenRouter models
+# next to GPT, and OpenAI alone, exactly as without this repo. It edits only
+# its own lines in Codex's config.toml. Quit and reopen the ChatGPT app after
+# switching, since Codex reads its config when it starts.
+set -euo pipefail
+
+home="${CODEX_HOME:-$HOME/.codex}"
+config="$home/config.toml"
+router="http://127.0.0.1:41419"
+bridge="http://127.0.0.1:41420"
+begin="# >>> codex-bridge: Codex reaches OpenAI through the router, which adds more models. \`codex-bridge off\` removes this block."
+end="# <<< codex-bridge"
+
+# without_ours prints the config without this script's lines: its block, and
+# the lines the README had people add by hand before the block existed.
+without_ours() {
+  awk '
+    /^# >>> codex-bridge/ { skip = 1; next }
+    /^# <<< codex-bridge/ { skip = 0; next }
+    skip { next }
+    $0 == "openai_base_url = \"http://127.0.0.1:41419/backend-api/codex\"" { next }
+    $0 == "experimental_realtime_webrtc_call_base_url = \"https://chatgpt.com/backend-api/codex\"" { next }
+    $0 == "experimental_realtime_ws_base_url = \"https://chatgpt.com/backend-api/codex\"" { next }
+    { print }
+  ' "$config" | sed '/./,$!d'
+}
+
+# replace swaps in the config at $1, keeping the old one as a backup and the
+# file's permissions. Codex keeps its model list across restarts; without it,
+# the reopened app fetches the list for the mode it is in.
+replace() {
+  cp -p "$config" "$config.codex-bridge.bak"
+  cat "$1" > "$config"
+  rm -f "$home/models_cache.json"
+}
+
+# warn_provider flags a top-level model_provider, which Codex uses instead of
+# its built-in OpenAI provider, whatever this switch says.
+warn_provider() {
+  local line
+  line=$(awk '/^\[/ { exit } /^[[:space:]]*model_provider[[:space:]]*=/ { print; exit }' "$config")
+  if [ -n "$line" ]; then
+    echo "Note: config.toml sets $line, which Codex uses instead. Delete that line for this switch to apply." >&2
+  fi
+}
+
+up() { curl -fs -m 2 "$1/health" > /dev/null 2>&1; }
+
+[ -f "$config" ] || { echo "no Codex config at $config" >&2; exit 1; }
+new=$(mktemp)
+trap 'rm -f "$new"' EXIT
+
+case "${1:-}" in
+on)
+  without_ours > "$new"
+  if grep '^[[:space:]]*openai_base_url[[:space:]]*=' "$new" > /dev/null; then
+    echo "config.toml already sets its own openai_base_url; remove it first." >&2
+    exit 1
+  fi
+  {
+    printf '%s\n' "$begin" \
+      "openai_base_url = \"$router/backend-api/codex\"" \
+      'experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"' \
+      "$end" ""
+    cat "$new"
+  } > "$new.on"
+  mv "$new.on" "$new"
+  replace "$new"
+  warn_provider
+  up "$router" || echo "The router isn't answering at $router; run make install in the repo." >&2
+  up "$bridge" || echo "The Claude bridge isn't answering at $bridge; run make install in the repo." >&2
+  echo "on: GPT goes through the router, with Claude, DeepSeek and Kimi in the picker. Quit and reopen the ChatGPT app."
+  ;;
+off)
+  without_ours > "$new"
+  replace "$new"
+  warn_provider
+  echo "off: Codex talks to OpenAI directly, as without this repo. Quit and reopen the ChatGPT app."
+  echo "Threads on Claude, DeepSeek or Kimi need it on again."
+  ;;
+status)
+  if grep -qx 'openai_base_url = "http://127.0.0.1:41419/backend-api/codex"' "$config"; then
+    echo "on: GPT goes through the router, with Claude, DeepSeek and Kimi in the picker."
+  else
+    echo "off: Codex talks to OpenAI directly."
+  fi
+  warn_provider
+  if up "$router"; then echo "router: running"; else echo "router: not running"; fi
+  if up "$bridge"; then echo "bridge: running"; else echo "bridge: not running"; fi
+  ;;
+*)
+  echo "usage: codex-bridge on|off|status" >&2
+  exit 2
+  ;;
+esac

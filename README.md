@@ -60,7 +60,7 @@ cd chatgpt-claude-bridge
 make install
 ```
 
-This runs the checks, builds both binaries into `~/.local/bin`, and starts them as launchd agents, which also start at login. Check that both answer:
+This runs the checks, builds both binaries into `~/.local/bin`, starts them as launchd agents, which also start at login, and installs the `codex-bridge` command. Check that both services answer:
 
 ```bash
 curl -s http://127.0.0.1:41419/health
@@ -75,18 +75,24 @@ OPENROUTER_API_KEY=sk-or-...
 
 The router reads the file on every request, so a new key takes effect without a restart. DeepSeek and Kimi appear in the picker once a key is there.
 
-**3. Point Codex at the router.** Back up `~/.codex/config.toml`, then add these top-level lines, before the first `[table]` in the file:
+**3. Point Codex at the router.**
+
+```bash
+codex-bridge on
+```
+
+This adds a marked block with two lines to the top of `~/.codex/config.toml`, and keeps the previous file as `config.toml.codex-bridge.bak`:
 
 ```toml
 openai_base_url = "http://127.0.0.1:41419/backend-api/codex"
 experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"
 ```
 
-- There must be no top-level `model_provider` line, so Codex uses its built-in OpenAI provider. Remove any `model_catalog_json` line too, because the router serves the model list itself.
+- There must be no top-level `model_provider` line, so Codex uses its built-in OpenAI provider; `codex-bridge` warns if there is one. Remove any `model_catalog_json` line too, because the router serves the model list itself.
 - `openai_base_url` moves only the address of that built-in provider. Codex still treats it as OpenAI: it sends your ChatGPT sign-in, which the router forwards only to chatgpt.com, and keeps every GPT feature on.
 - `experimental_realtime_webrtc_call_base_url` starts Voice calls straight at OpenAI, so voice never passes through the router. Don't set `experimental_realtime_ws_base_url`: a voice call's own websocket goes to api.openai.com, and that setting moves it to an address that answers 403.
 
-**Upgrading from the earlier setup**, which used a `[model_providers.router]` table: delete the top-level `model_provider = "router"` line and any `experimental_realtime_ws_base_url` line, add the lines above, and keep the table. Codex resumes each thread with the provider it started with, so threads you started before still need it. New threads use the built-in provider.
+**Upgrading from the earlier setup**, which used a `[model_providers.router]` table: delete the top-level `model_provider = "router"` line, run `codex-bridge on`, which also removes the earlier setup's `experimental_realtime_ws_base_url` line, and keep the table. Codex resumes each thread with the provider it started with, so threads you started before still need it. New threads use the built-in provider.
 
 **4. Quit and reopen the ChatGPT app.** Opus 5.5 appears in Codex's model picker, along with DeepSeek and Kimi if you added a key.
 
@@ -95,6 +101,18 @@ experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/co
 ```bash
 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex exec --skip-git-repo-check -m claude-opus-5-5 'Run `echo ok` and reply with its output.' < /dev/null
 ```
+
+## Turn it off
+
+To see Codex exactly as OpenAI ships it, switch the router off, and back on when you want the other models again:
+
+```bash
+codex-bridge off      # Codex talks to OpenAI directly, as without this repo
+codex-bridge on       # GPT goes through the router again, with the added models
+codex-bridge status   # which one is active, and whether both services run
+```
+
+Quit and reopen the ChatGPT app after switching, since Codex reads its config when it starts. The command edits only its own block in `~/.codex/config.toml` and clears Codex's cached model list, so the reopened app shows the right picker. The router and bridge keep running while it's off, but nothing calls them. Threads you ran on Claude, DeepSeek or Kimi need it on again.
 
 ## Configure the router
 
@@ -127,7 +145,7 @@ Then run `make install-router` and reopen the ChatGPT app.
 
 ## What it puts on your machine
 
-- `~/.local/bin/codex-model-router` and `~/.local/bin/chatgpt-claude-bridge`
+- `~/.local/bin/codex-model-router` and `~/.local/bin/chatgpt-claude-bridge`, and the `~/.local/bin/codex-bridge` switch
 - `~/Library/LaunchAgents/com.github.kiluazen.codex-model-router.plist` and `com.github.kiluazen.chatgpt-claude-bridge.plist`
 - Logs: `~/.codex/log/codex-model-router.log` (one line per request or websocket response, with model, route, status or outcome, and duration) and `~/.codex/log/chatgpt-claude-bridge.log`
 - `~/.codex/claude-bridge-state/`: each Claude session's id, state and system prompt
@@ -148,13 +166,15 @@ Your ChatGPT sign-in goes only to chatgpt.com and your OpenRouter key only to op
 ## Uninstall
 
 ```bash
+codex-bridge off
 for s in codex-model-router chatgpt-claude-bridge; do
   launchctl bootout "gui/$(id -u)/com.github.kiluazen.$s"
   rm -f ~/Library/LaunchAgents/com.github.kiluazen.$s.plist ~/.local/bin/$s
 done
+rm -f ~/.local/bin/codex-bridge
 ```
 
-Then remove the `openai_base_url` line, and any router provider table, from `~/.codex/config.toml`, and reopen the ChatGPT app.
+Then remove any router provider table from `~/.codex/config.toml`, and reopen the ChatGPT app.
 
 ## Develop
 
@@ -168,6 +188,7 @@ bridge/             the Claude bridge
   internal/         bridge (server, sessions), claude, responses, translate, patch, config
   e2e/              end-to-end tests against the real Claude Code and Codex
 scripts/install.sh  builds one service and runs it under launchd
+scripts/codex-bridge  switches Codex between the router and OpenAI alone
 ```
 
 ```bash
