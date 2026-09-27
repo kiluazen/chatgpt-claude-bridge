@@ -16,6 +16,7 @@ type Config struct {
 	Model     string
 	ClaudeBin string
 	// CodexBin doubles as Codex's patch engine (--codex-run-as-apply-patch).
+	// Empty means the ChatGPT app's own, wherever the installed version keeps it.
 	CodexBin string
 	// StateDir holds each thread's session state and system prompt.
 	StateDir string
@@ -40,7 +41,7 @@ func FromEnv() (Config, error) {
 		Addr:        "127.0.0.1:" + env("CHATGPT_CLAUDE_BRIDGE_PORT", "41420"),
 		Model:       "claude-opus-5-5",
 		ClaudeBin:   env("CHATGPT_CLAUDE_BRIDGE_CLAUDE", filepath.Join(home, ".local/bin/claude")),
-		CodexBin:    env("CHATGPT_CLAUDE_BRIDGE_CODEX", "/Applications/ChatGPT.app/Contents/Resources/codex"),
+		CodexBin:    os.Getenv("CHATGPT_CLAUDE_BRIDGE_CODEX"),
 		StateDir:    env("CHATGPT_CLAUDE_BRIDGE_STATE", filepath.Join(home, ".codex/claude-bridge-state")),
 		Watchdog:    5 * time.Minute,
 		IdleTimeout: 20 * time.Minute,

@@ -13,6 +13,24 @@ import (
 	"strings"
 )
 
+// codexPaths are where the ChatGPT app keeps its Codex binary, newest layout
+// first.
+var codexPaths = []string{
+	"/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+	"/Applications/ChatGPT.app/Contents/Resources/codex",
+}
+
+// Codex is the ChatGPT app's Codex binary, which holds the patch engine. The
+// app moves it between versions, so each call looks it up again.
+func Codex() string {
+	for _, p := range codexPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return codexPaths[0]
+}
+
 // Lines splits text into lines, without the empty entry a final newline leaves.
 func Lines(text string) []string {
 	lines := strings.Split(text, "\n")

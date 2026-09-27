@@ -549,7 +549,7 @@ func (s *Session) checkPatch(d translate.Decision) translate.Decision {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := patch.Check(ctx, s.cfg.CodexBin, d.Input, d.Edit.Path, d.Edit.Before, d.Edit.After); err != nil {
+	if err := patch.Check(ctx, cmp.Or(s.cfg.CodexBin, patch.Codex()), d.Input, d.Edit.Path, d.Edit.Before, d.Edit.After); err != nil {
 		slog.Error("patch check failed; sending a full rewrite", "session", s.id, "path", d.Edit.Path, "err", err)
 		d.Input = patch.Rewrite(d.Edit.Path, d.Edit.After)
 	}

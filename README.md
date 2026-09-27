@@ -93,7 +93,7 @@ experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/co
 **5. Verify from a terminal.** `codex exec` waits for stdin to close, so keep the `< /dev/null`.
 
 ```bash
-/Applications/ChatGPT.app/Contents/Resources/codex exec --skip-git-repo-check -m claude-opus-5-5 'Run `echo ok` and reply with its output.' < /dev/null
+/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex exec --skip-git-repo-check -m claude-opus-5-5 'Run `echo ok` and reply with its output.' < /dev/null
 ```
 
 ## Configure the router

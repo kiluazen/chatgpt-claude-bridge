@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const codexBin = "/Applications/ChatGPT.app/Contents/Resources/codex"
+var codexBin = Codex()
 
 func numbered(n int, changed map[int]bool) string {
 	var b strings.Builder

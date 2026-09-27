@@ -7,13 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-codex=/Applications/ChatGPT.app/Contents/Resources/codex
+# The ChatGPT app's Codex binary; newer versions keep it under codex-cli/bin.
+codex=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
+[ -x "$codex" ] || codex=/Applications/ChatGPT.app/Contents/Resources/codex
 env="" after=:
 case "${1:-}" in
 bridge)
   name=chatgpt-claude-bridge port=41420 busy=busy
   claude=$(command -v claude) || { echo "Claude Code (claude) is not on PATH; install it and log in first" >&2; exit 1; }
-  [ -x "$codex" ] || { echo "the ChatGPT desktop app is not at /Applications/ChatGPT.app" >&2; exit 1; }
+  [ -x "$codex" ] || { echo "no Codex binary in /Applications/ChatGPT.app; install or update the ChatGPT desktop app" >&2; exit 1; }
   # launchd starts agents with a bare PATH, so the agent gets claude's full path.
   env="<key>EnvironmentVariables</key><dict><key>CHATGPT_CLAUDE_BRIDGE_CLAUDE</key><string>$claude</string></dict>"
   ;;

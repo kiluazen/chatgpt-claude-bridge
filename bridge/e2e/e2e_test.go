@@ -23,13 +23,16 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kiluazen/chatgpt-claude-bridge/bridge/internal/patch"
 )
 
 const (
-	addr     = "127.0.0.1:41421"
-	model    = "claude-opus-5-5"
-	codexBin = "/Applications/ChatGPT.app/Contents/Resources/codex"
+	addr  = "127.0.0.1:41421"
+	model = "claude-opus-5-5"
 )
+
+var codexBin = patch.Codex()
 
 var bridge struct {
 	bin, state string
